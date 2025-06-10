@@ -35,9 +35,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--cal-batch-size", type=int, default=16, help="Batch size for loading the calibration data.")
-parser.add_argument(
-    "--cal-max-seqlen", type=int, default=1024, help="Maximum sequence length for the calibration data."
-)
+parser.add_argument("--cal-max-seqlen", type=int, default=1024, help="Maximum sequence length for the calibration data.")
 parser.add_argument("--varied-seqlen", action="store_true", help="Varied sequence lengths in the calibration data.")
 parser.add_argument("--seed", type=int, default=42, help="Seed for sampling the calibration data.")
 
@@ -80,12 +78,12 @@ def save_hidden_states_hook(module, input, output):
     co_var = mul.sum(dim=0)/args.cal_batch_size
     co_var = co_var.detach().cpu()
     co_var = co_var.numpy()
-    np.save("co_var_"+str(layer)+".npy",co_var)
+    np.save("files/co_var_"+str(layer)+".npy",co_var)
 
     mean = output[0].sum(dim=0)/args.cal_batch_size
     mean = mean.detach().cpu()
     mean = mean.numpy()
-    np.save("mean_"+str(layer)+".npy",mean)
+    np.save("files/mean_"+str(layer)+".npy",mean)
 
     print(str(layer)+".npy")
 
