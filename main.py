@@ -9,6 +9,7 @@ import argparse
 from typing import Tuple
 
 import torch
+import torch.nn as nn
 import numpy as np
 from transformers import LlamaTokenizer, GenerationConfig, LlamaConfig, AutoTokenizer
 from transformers.models.llama.modeling_llama import LlamaConfig, LlamaDecoderLayer, LlamaForCausalLM, LlamaRMSNorm
@@ -39,6 +40,8 @@ parser.add_argument("--cal-max-seqlen", type=int, default=1024, help="Maximum se
 parser.add_argument("--varied-seqlen", action="store_true", help="Varied sequence lengths in the calibration data.")
 parser.add_argument("--seed", type=int, default=42, help="Seed for sampling the calibration data.")
 
+parser.add_argument("--hook_level", type=int, default=0, help="0 is for decoder block and 1 is for nn.linear")
+
 args = parser.parse_args()
 
 tokenizer = LlamaTokenizer.from_pretrained(args.model,use_auth_token = args.auth_token)
@@ -50,6 +53,7 @@ model = LlamaForCausalLM.from_pretrained(
     torch_dtype="auto",             
     use_auth_token = args.auth_token
 )
+
 dataset = data_utils.get_dataset(args.cal_dataset)
 train_dataset, test_dataset = dataset["train"], dataset["test"]
 train_loader = data_utils.prepare_dataloader(
@@ -66,7 +70,6 @@ for i in train_loader:
     data = i
     break
 
-# hook_outputs = {}
 
 layer_c = [0]
 def save_hidden_states_hook(module, input, output):
@@ -87,37 +90,50 @@ def save_hidden_states_hook(module, input, output):
 
     print(str(layer)+".npy")
 
+if args.hook_level == 0:
+    os.makedirs("files",exist_ok = True)
+    # Register hook to each decoder block
+    for i, block in enumerate(model.model.layers):
+        block.register_forward_hook(save_hidden_states_hook)
 
-# Register hook to each decoder block
-for i, block in enumerate(model.model.layers):
-    block.register_forward_hook(save_hidden_states_hook)
+
+hook_outputs = {}
+
+def hook_fn(module, input, output):
+    name = module._hook_name  # Custom attribute we'll assign below
+    hook_outputs[name] = output.detach().cpu()
+    print(f"Hook triggered on: {name} | Output shape: {output.shape}")
+
+    transpose = torch.transpose(output,1,2)
+    mul = torch.matmul(transpose,output)
+
+    co_var = mul.sum(dim=0)/output.shape[0]
+    co_var = co_var.detach().cpu()
+    co_var = co_var.numpy()
+    np.save("files_atom/co_var_"+str(name)+".npy",co_var)
+
+    mean = output.sum(dim=0)/output.shape[0]
+    mean = mean.detach().cpu()
+    mean = mean.numpy()
+    np.save("files_atom/mean_"+str(name)+".npy",mean)
+
+if args.hook_level ==1:
+    os.makedirs("files_atom",exist_ok = True)
+    # Register hooks on every nn.Linear layer
+    for name, module in model.model.named_modules():
+        if isinstance(module, nn.Linear):
+            module._hook_name = name  # Add name so we know which layer triggered
+            module.register_forward_hook(hook_fn)
+
 
 model.eval()
 with torch.no_grad():
     _ = model(**data)
 
 
-import pdb;pdb.set_trace()
 
-# cal_sigma = []
-# for i in list(hook_outputs.keys()):
-#     layer_output = hook_outputs[i]
-#     cal_data = torch.zeros(4096,4096)
-#     for j in range(16):
-#         mat = layer_output[j]
-#         transpose_mat = torch.transpose(mat,0,1)
-#         product = torch.matmul(transpose_mat,mat)
-#         cal_data = cal_data + product
-#     cal_data = cal_data/16
-#     cal_sigma.append(cal_data)
 
-# cal_sigma = []
-# for i in list(hook_outputs.keys()):
-#     layer_output = hook_outputs[i].to(device)
-#     transpose = torch.transpose(layer_output,1,2)
-#     mul = torch.matmul(transpose,layer_output)
-#     final = mul.sum(dim=0)/args.cal_batch_size
-#     cal_sigma.append(final)
+
 
 
 

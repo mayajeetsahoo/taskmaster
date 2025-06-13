@@ -85,7 +85,6 @@ def prepare_dataloader(
         logging.warning(
             "varied_seqlen=False, but nsamples is not specified. This will lead to tokenization of the entire dataset, which will be slow."
         )
-
     data_name = dataset.column_names[0]
     ds = dataset.filter(lambda x: len(x[data_name]) > 0)
 
