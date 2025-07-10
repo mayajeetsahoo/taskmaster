@@ -50,6 +50,8 @@ parser.add_argument("--hook_level", type=int, default=0, help="0 is for decoder 
 parser.add_argument("--sparsity", type=float, default=0.3, help="sparsity")
 
 parser.add_argument("--ppl-eval-batch-size", type=int, default=8, help="Batch size for evaluating the perplexity.")
+
+parser.add_argument("--type2_engg", type=int, default=0, help="zero means not actual pruning and one means actual pruning")
 args = parser.parse_args()
 
 tokenizer = LlamaTokenizer.from_pretrained(args.model,use_auth_token = args.auth_token)
@@ -105,7 +107,7 @@ def capture_input_to_wdown(module, input, output):
     scores_vector = torch.diagonal(score_mat)
 
     topk_scores, topk_indices = torch.topk(scores_vector, int((1-args.sparsity)*co_var.size(0)), largest=True)
-    
+    topk_indices = topk_indices.sort().values
     d_int = scores_vector.shape[0]
     S_k = torch.zeros((d_int, int((1-args.sparsity)*co_var.size(0))), dtype=torch.float32)
     S_k[topk_indices, torch.arange(int((1-args.sparsity)*co_var.size(0)))] = 1.0
@@ -123,7 +125,7 @@ def capture_input_to_wdown(module, input, output):
     module.down_proj.weight.data = W_D_k.T.to(module.down_proj.weight.device)
 
 
-data = {k: v.to("cuda:0") for k, v in data.items()}
+data = {k: v.to("cuda:1") for k, v in data.items()}
 # Register to specific MLP
 
 hooks = []
@@ -143,10 +145,9 @@ for hook in hooks:
     hook.remove()
 
 
-import pdb;pdb.set_trace()
 param = sum(int(p.nelement()) for p in model.parameters())
-logging.info(f"unpruned model parameter count is :{param}")
-logging.info("calculating unpruned model perplexity")
+logging.info(f"pruned model parameter count is :{param}")
+logging.info("calculating pruned model perplexity")
 dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
-logging.info(f"unpruned model perplexity is :{dataset_ppl}")
+logging.info(f"pruned model perplexity is :{dataset_ppl}")
 
