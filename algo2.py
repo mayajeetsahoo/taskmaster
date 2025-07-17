@@ -212,7 +212,7 @@ class self_attn_comp(LlamaAttention):
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
-class acc_functor():
+class algo2_functor():
     def __init__(self):
         self.storage = {}
 
@@ -247,7 +247,7 @@ for layer in range(model.config.num_hidden_layers):
     module = list_layers[layer][1]
     name = list_layers[layer][0] ## string
 
-    layer_functor = acc_functor()
+    layer_functor = algo2_functor()
 
     module._name = name
     hook = module.register_forward_hook(layer_functor)
@@ -326,7 +326,6 @@ for layer in range(model.config.num_hidden_layers):
     module.self_attn.v_proj.weight.data = v.to(device)
     module.self_attn.o_proj.weight.data = o.to(device)
 
-    # import pdb;pdb.set_trace()
     torch.cuda.empty_cache()
     
 

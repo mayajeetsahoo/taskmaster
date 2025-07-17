@@ -115,13 +115,13 @@ class algo1_functor():
         raise InterruptExecution()
     
 
-layers = list(model.model.layers.named_children())
+list_layers = list(model.model.layers.named_children())
 
 for layer in range(model.config.num_hidden_layers):
     print(f'compressing mlp layer of {layer} th decoder layer')
 
-    module = layers[layer][1].mlp
-    name = layers[layer][0]
+    module = list_layers[layer][1].mlp
+    name = list_layers[layer][0]
 
     module._name = name
     functor = algo1_functor()
