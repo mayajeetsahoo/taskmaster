@@ -87,11 +87,11 @@ for i in train_loader:
 
 data = {k: v.to("cuda:0") for k, v in data.items()}
 
-# param = sum(int(p.nelement()) for p in model.parameters())
-# logging.info(f"unpruned model parameter count is :{param}")
-# logging.info("calculating unpruned model perplexity")
-# dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
-# logging.info(f"unpruned model perplexity is :{dataset_ppl}")
+param = sum(int(p.nelement()) for p in model.parameters())
+logging.info(f"unpruned model parameter count is :{param}")
+logging.info("calculating unpruned model perplexity")
+dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
+logging.info(f"unpruned model perplexity is :{dataset_ppl}")
 
 
 class InterruptExecution(Exception):
