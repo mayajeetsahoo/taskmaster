@@ -20,9 +20,10 @@ logging.basicConfig(
     format='[%(levelname)s] %(message)s'
 )
 
-sparsity = []
-for i in range(32):
+sparsity = [0.9]
+for i in range(31):
     sparsity.append(0.2)
+print(sparsity)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type = str, help = "model to load")
@@ -94,8 +95,8 @@ for i in train_loader:
 param = sum(int(p.nelement()) for p in model.parameters())
 logging.info(f"unpruned model parameter count is :{param}")
 logging.info("calculating unpruned model perplexity")
-dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
-logging.info(f"unpruned model perplexity is :{dataset_ppl}")
+# dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
+# logging.info(f"unpruned model perplexity is :{dataset_ppl}")
 
 data = {k: v.to("cuda:0") for k, v in data.items()}
 
@@ -185,8 +186,9 @@ class self_attn_comp_qwen(Qwen2Attention):
         self.head_dim_qk = math.ceil((1-args.sparsity)*(model.config.hidden_size/model.config.num_attention_heads))
         if args.type2_engg == 0: 
             self.head_dim_qk = self.head_dim  # compressed dimension
-        elif args.type2_engg == 1: 
+        elif args.type2_engg == 1:
             self.head_dim_qk = math.ceil((1-args.sparsity)*(model.config.hidden_size/model.config.num_attention_heads))
+            self.head_dim_qk = math.ceil((1-sparsity[layer_idx])*(model.config.hidden_size/model.config.num_attention_heads))
         self.original_head_dim = self.head_dim  # 128
         
         self.q_proj = nn.Linear(
@@ -281,6 +283,7 @@ class self_attn_comp(LlamaAttention):
             self.head_dim_qk = self.head_dim  # compressed dimension
         elif args.type2_engg == 1: 
             self.head_dim_qk = math.ceil((1-args.sparsity)*(model.config.hidden_size/model.config.num_attention_heads))
+            self.head_dim_qk = math.ceil((1-sparsity[layer_idx])*(model.config.hidden_size/model.config.num_attention_heads))
         self.original_head_dim = self.head_dim  # 128
         
         self.q_proj = nn.Linear(
@@ -398,7 +401,9 @@ for layer in range(model.config.num_hidden_layers):
     weight_k_transposed = torch.squeeze(torch.unsqueeze(module.self_attn.k_proj.weight.data.detach().cpu().T,dim=0).view(1,attention_mat_size,-1,model.config.head_dim).transpose(1,2),dim=0)
     
     k = math.ceil((1-args.sparsity)*(model.config.hidden_size/model.config.num_attention_heads))
-
+    
+    k = math.ceil((1-sparsity[int(module._name)])*(model.config.hidden_size/model.config.num_attention_heads))
+    # import pdb;pdb.set_trace()
     
     if args.model.split("/")[0] == "meta-llama":
         if args.type2_engg ==1:    
