@@ -9,22 +9,23 @@ from transformers.models.llama.modeling_llama import LlamaConfig, LlamaDecoderLa
 import os
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"
 
+auth_token = ""
 
-tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",use_auth_token = "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")
+tokenizer = LlamaTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf",use_auth_token = auth_token)
 tokenizer.pad_token = tokenizer.eos_token
 
 model = LlamaForCausalLM.from_pretrained(
     "meta-llama/Llama-2-7b-hf",
     device_map="auto",              
     torch_dtype=torch.float32,             
-    use_auth_token = "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"
+    use_auth_token = auth_token
 )
 
 lm = HFLM(pretrained=model, tokenizer=tokenizer)
 results = evaluator.simple_evaluate(
     model=lm,
     tasks=["humaneval"],   # <-- task name
-    batch_size=4
+    batch_size=4,confirm_run_unsafe_code=True
 )
 print(make_table(results))
    
