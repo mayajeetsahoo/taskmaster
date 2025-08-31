@@ -1,22 +1,19 @@
-import os
-import gc
-import sys
-import time
-import json
-import copy
-import random
+from lm_eval import evaluator
+from lm_eval.models.huggingface import HFLM
+from lm_eval.utils import make_table
+
 import argparse
 from typing import Tuple
 import logging
 import torch
 import torch.nn as nn
 import numpy as np
-from transformers import LlamaTokenizer, GenerationConfig, LlamaConfig, AutoTokenizer
+from transformers import LlamaTokenizer, GenerationConfig, LlamaConfig, AutoTokenizer, AutoModelForCausalLM
 from transformers.models.llama.modeling_llama import LlamaConfig, LlamaDecoderLayer, LlamaForCausalLM, LlamaRMSNorm
-
 import data_utils
-from utils import cleanup_memory
 import utils
+from tqdm import tqdm
+from gs import functor_gs , global_sparsity_allocation
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +28,7 @@ parser.add_argument(
         "--cal-dataset",
         type=str,
         help="Dataset to calibrate and calculate perplexity on.",
-        choices=["wikitext2", "ptb", "c4", "alpaca","glue"],
+        choices=["wikitext2", "ptb", "c4", "alpaca","glue","hotpot","pubmed"],
         default="wikitext2",
     )
 parser.add_argument(
@@ -49,23 +46,48 @@ parser.add_argument("--seed", type=int, default=42, help="Seed for sampling the 
 parser.add_argument("--hook_level", type=int, default=0, help="0 is for decoder block and 1 is for nn.linear")
 parser.add_argument("--sparsity", type=float, default=0.3, help="sparsity")
 
-parser.add_argument("--ppl-eval-batch-size", type=int, default=8, help="Batch size for evaluating the perplexity.")
+parser.add_argument("--ppl-eval-batch-size", type=int, default=4, help="Batch size for evaluating the perplexity.")
 
 parser.add_argument("--type2_engg", type=int, default=0, help="zero means not actual pruning and one means actual pruning")
+parser.add_argument("--sparsity_allocation", type=int, default=1, help="1 means optimal allocation by measuring cosine similarity and 0 is uniform")
 args = parser.parse_args()
 
-tokenizer = LlamaTokenizer.from_pretrained(args.model,use_auth_token = args.auth_token)
-tokenizer.pad_token = tokenizer.eos_token
 
-model = LlamaForCausalLM.from_pretrained(
-    args.model,
-    device_map="auto",              
-    torch_dtype=torch.float32,             
-    use_auth_token = args.auth_token
-)
+
+if args.model.split('/')[0] == "meta-llama":
+    tokenizer = LlamaTokenizer.from_pretrained(args.model,use_auth_token = args.auth_token)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    model = LlamaForCausalLM.from_pretrained(
+        args.model,
+        device_map="auto",              
+        torch_dtype=torch.float32,             
+        use_auth_token = args.auth_token
+    )
+elif args.model.split('/')[0] == "Qwen":
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(args.model, trust_remote_code=True, torch_dtype=torch.float32).to(torch.device("cuda:0"))
+    model.config.head_dim = model.config.hidden_size//model.config.num_attention_heads
+
+device = model.device
+
+if args.cal_dataset == "pubmed":
+    lm = HFLM(pretrained=model, tokenizer=tokenizer)
+    results = evaluator.simple_evaluate(
+        model=lm,
+        tasks=["pubmedqa"],
+        batch_size=4
+    )
+    print(make_table(results))
 
 dataset = data_utils.get_dataset(args.cal_dataset)
-train_dataset, test_dataset = dataset["train"], dataset["test"]
+if args.cal_dataset == "hotpot":
+    train_dataset, test_dataset = dataset["train"], dataset["validation"]
+elif args.cal_dataset == "pubmed":
+    train_dataset, test_dataset = dataset["train"], dataset["train"]
+else:
+    train_dataset, test_dataset = dataset["train"], dataset["test"]
+# train_dataset, test_dataset = dataset["train"], dataset["test"]
 train_loader = data_utils.prepare_dataloader(
     dataset=train_dataset,
     tokenizer=tokenizer,
@@ -93,6 +115,16 @@ logging.info("calculating unpruned model perplexity")
 dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
 logging.info(f"unpruned model perplexity is :{dataset_ppl}")
 
+logging.info(f"calculating optimal sparsity allocation")
+if args.sparsity_allocation ==1:
+    gs = global_sparsity_allocation(model, data, args.sparsity)
+    sparsity_layer = gs.gs
+else:
+    sparsity_layer = []
+    for _ in range(model.config.num_hidden_layers):
+        sparsity_layer.append(args.sparsity)
+
+logging.info(f"calculating optimal sparsity allocation completed")
 
 class InterruptExecution(Exception):
     pass
@@ -144,11 +176,11 @@ for layer in range(model.config.num_hidden_layers):
     score_mat = torch.matmul(co_var,torch.inverse(A))
     scores_vector = torch.diagonal(score_mat)
 
-    topk_scores, topk_indices = torch.topk(scores_vector, int((1-args.sparsity)*co_var.size(0)), largest=True)
+    topk_scores, topk_indices = torch.topk(scores_vector, int((1-sparsity_layer[int(module._name)])*co_var.size(0)), largest=True)
     topk_indices = topk_indices.sort().values
     d_int = scores_vector.shape[0]
-    S_k = torch.zeros((d_int, int((1-args.sparsity)*co_var.size(0))), dtype=torch.float32)
-    S_k[topk_indices, torch.arange(int((1-args.sparsity)*co_var.size(0)))] = 1.0
+    S_k = torch.zeros((d_int, int((1-sparsity_layer[int(module._name)])*co_var.size(0))), dtype=torch.float32)
+    S_k[topk_indices, torch.arange(int((1-sparsity_layer[int(module._name)])*co_var.size(0)))] = 1.0
     W_U_k = torch.concat([module.up_proj.weight,module.gate_proj.weight],dim=1).T.to(torch.float32) @ S_k.to(module.gate_proj.weight.device) 
 
     Mat = (S_k.T @ co_var @ S_k).to(torch.float64)
@@ -167,3 +199,14 @@ logging.info(f"pruned model parameter count is :{param}")
 logging.info("calculating pruned model perplexity")
 dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
 logging.info(f"pruned model perplexity is :{dataset_ppl}")
+
+
+if args.cal_dataset == "pubmed":
+    lm = HFLM(pretrained=model, tokenizer=tokenizer)
+    results = evaluator.simple_evaluate(
+        model=lm,
+        tasks=["pubmedqa"],
+        batch_size=4
+    )
+    print(make_table(results))
+
