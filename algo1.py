@@ -28,7 +28,7 @@ parser.add_argument(
         "--cal-dataset",
         type=str,
         help="Dataset to calibrate and calculate perplexity on.",
-        choices=["wikitext2", "ptb", "c4", "alpaca","glue","hotpot","pubmed"],
+        choices=["wikitext2", "ptb", "c4", "alpaca","glue","hotpot","pubmed","medqa_4options","billsum","multilegalpile"],
         default="wikitext2",
     )
 parser.add_argument(
@@ -71,20 +71,22 @@ elif args.model.split('/')[0] == "Qwen":
 
 device = model.device
 
-if args.cal_dataset == "pubmed":
-    lm = HFLM(pretrained=model, tokenizer=tokenizer)
-    results = evaluator.simple_evaluate(
-        model=lm,
-        tasks=["pubmedqa"],
-        batch_size=4
-    )
-    print(make_table(results))
 
-dataset = data_utils.get_dataset(args.cal_dataset)
+
+
+if args.cal_dataset not in ["billsum","multilegalpile"]:
+    dataset = data_utils.get_dataset(args.cal_dataset)
+
 if args.cal_dataset == "hotpot":
     train_dataset, test_dataset = dataset["train"], dataset["validation"]
 elif args.cal_dataset == "pubmed":
     train_dataset, test_dataset = dataset["train"], dataset["train"]
+elif args.cal_dataset == "medqa_4options":
+    train_dataset, test_dataset = dataset["train"], dataset["validation"]
+elif args.cal_dataset == "billsum":
+    train_dataset, test_dataset = data_utils.get_dataset(args.cal_dataset)
+elif args.cal_dataset == "multilegalpile":
+    train_dataset, test_dataset = data_utils.get_dataset(args.cal_dataset)
 else:
     train_dataset, test_dataset = dataset["train"], dataset["test"]
 # train_dataset, test_dataset = dataset["train"], dataset["test"]
@@ -102,23 +104,41 @@ test_loader = data_utils.prepare_test_dataloader(
         dataset=test_dataset, tokenizer=tokenizer, batch_size=args.ppl_eval_batch_size
     )
 
-for i in train_loader:
-    i.pop("labels")
-    data = i
-    break
+
+
+data = next(iter(train_loader))
+data.pop("labels")
 
 data = {k: v.to("cuda:0") for k, v in data.items()}
 
 param = sum(int(p.nelement()) for p in model.parameters())
 logging.info(f"unpruned model parameter count is :{param}")
-logging.info("calculating unpruned model perplexity")
-dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
-logging.info(f"unpruned model perplexity is :{dataset_ppl}")
+if args.cal_dataset not in ["pubmed","billsum","medqa_4options"]:
+    logging.info("calculating unpruned model perplexity")
+    # dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
+    # logging.info(f"unpruned model perplexity is :{dataset_ppl}")
+
+
+if args.cal_dataset in ["pubmed","medqa_4options"]:
+    logging.info(f"calculating unpruned model accuracy for medical question answering")
+    lm = HFLM(pretrained=model, tokenizer=tokenizer)
+    results = evaluator.simple_evaluate(
+        model=lm,
+        tasks=[args.cal_dataset],
+        batch_size=4
+    )
+    print(make_table(results))
+
+if args.cal_dataset == "billsum":
+    logging.info("calculating unpruned model rouge scores")
+    rouge_scores = utils.evaluate_rouge(model,test_dataset,tokenizer)
+    logging.info(f"unpruned model rouge scores are :rouge1:{rouge_scores["rouge1"]} rouge2:{rouge_scores["rouge2"]}  rougeL:{rouge_scores["rougeL"]}")
 
 logging.info(f"calculating optimal sparsity allocation")
 if args.sparsity_allocation ==1:
     gs = global_sparsity_allocation(model, data, args.sparsity)
-    sparsity_layer = gs.gs
+    # sparsity_layer = gs.gs
+    sparsity_layer = [0.8 if i>1 else (i.item()) for i in gs.gs]
 else:
     sparsity_layer = []
     for _ in range(model.config.num_hidden_layers):
@@ -131,7 +151,7 @@ class InterruptExecution(Exception):
 
 class algo1_functor():
     def __init__(self):
-        self.co_var = None
+        self.co_var = torch.zeros(model.config.intermediate_size, model.config.intermediate_size)
     
     def __call__(self,module,input,output):
         gate = module.gate_proj(input[0])
@@ -142,15 +162,15 @@ class algo1_functor():
 
         co_var = mul.sum(dim=0)/hidden.shape[0]
         co_var = co_var.to(torch.float32).detach().cpu()
-        self.co_var = co_var
-
+        
+        self.co_var = self.co_var + co_var
         raise InterruptExecution()
     
 
 list_layers = list(model.model.layers.named_children())
 
-for layer in range(model.config.num_hidden_layers):
-    print(f'compressing mlp layer of {layer} th decoder layer')
+for layer in tqdm(range(model.config.num_hidden_layers)):
+    # print(f'compressing mlp layer of {layer} th decoder layer')
 
     module = list_layers[layer][1].mlp
     name = list_layers[layer][0]
@@ -159,12 +179,14 @@ for layer in range(model.config.num_hidden_layers):
     functor = algo1_functor()
     hook = module.register_forward_hook(functor)
 
-    with torch.no_grad():
-        try:
-            _ = model(**data)
-        except InterruptExecution:
-            pass
-
+    for batch in train_loader:
+        batch.pop("labels")
+        with torch.no_grad():
+            try:
+                _ = model(**batch)
+            except InterruptExecution:
+                pass
+    import pdb;pdb.set_trace()
     hook.remove()
     ## pruning
 
@@ -196,17 +218,25 @@ for layer in range(model.config.num_hidden_layers):
 
 param = sum(int(p.nelement()) for p in model.parameters())
 logging.info(f"pruned model parameter count is :{param}")
-logging.info("calculating pruned model perplexity")
-dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
-logging.info(f"pruned model perplexity is :{dataset_ppl}")
+if args.cal_dataset not in ["pubmed","billsum","medqa_4options"]:
+    logging.info("calculating pruned model perplexity")
+    dataset_ppl = utils.evaluate_ppl(model, model.config.pad_token_id, test_loader)
+    logging.info(f"pruned model perplexity is :{dataset_ppl}")
 
 
-if args.cal_dataset == "pubmed":
+if args.cal_dataset in ["pubmed","medqa_4options"]:
+    logging.info(f"calculating pruned model accuracy for medical question answering")
     lm = HFLM(pretrained=model, tokenizer=tokenizer)
     results = evaluator.simple_evaluate(
         model=lm,
-        tasks=["pubmedqa"],
+        tasks=[args.cal_dataset],
         batch_size=4
     )
     print(make_table(results))
+
+
+if args.cal_dataset == "billsum":
+    logging.info("calculating pruned model rouge scores")
+    rouge_scores = utils.evaluate_rouge(model,test_dataset,tokenizer)
+    logging.info(f"pruned model rouge scores are :rouge1:{rouge_scores["rouge1"]} rouge2:{rouge_scores["rouge2"]}  rougeL:{rouge_scores["rougeL"]}")
 

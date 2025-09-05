@@ -23,7 +23,7 @@ class functor_gs():
         dot = (input[0].detach().cpu()*output[0].detach().cpu()).sum(dim=-1)
         xin_norm = input[0].detach().cpu().norm(dim=-1)
         xout_norm = output[0].detach().cpu().norm(dim=-1)
-        cos_sim = dot / (xin_norm * xout_norm + 1e-8)
+        cos_sim = dot / (xin_norm * xout_norm)
         mean_cos_sim = cos_sim.mean()
         s = 1 - mean_cos_sim
         self.storage[module._name] = s.item()
@@ -56,11 +56,11 @@ class global_sparsity_allocation():
         v= torch.tensor(v)
         soft = torch.softmax(v,dim=-1)
 
-        gs = 32*self.sparsity*soft
+        gs = self.model.config.num_hidden_layers*self.sparsity*soft
         return gs
 
 
-if __name__=="main":
+if __name__=="__main__":
     logging.basicConfig(
     level=logging.INFO,
     format='[%(levelname)s] %(message)s')
@@ -72,7 +72,7 @@ if __name__=="main":
             "--cal-dataset",
             type=str,
             help="Dataset to calibrate and calculate perplexity on.",
-            choices=["wikitext2", "ptb", "c4", "alpaca","glue","hotpot","pubmed"],
+            choices=["wikitext2", "ptb", "c4", "alpaca","glue","hotpot","pubmed","medqa_4options","billsum","multilegalpile"],
             default="wikitext2",
         )
     parser.add_argument(
@@ -93,6 +93,7 @@ if __name__=="main":
     parser.add_argument("--ppl-eval-batch-size", type=int, default=4, help="Batch size for evaluating the perplexity.")
 
     parser.add_argument("--type2_engg", type=int, default=0, help="zero means not actual pruning and one means actual pruning")
+    parser.add_argument("--sparsity_allocation", type=int, default=1, help="1 means optimal allocation by measuring cosine similarity and 0 is uniform")
     args = parser.parse_args()
 
     if args.model.split('/')[0] == "meta-llama":
@@ -110,13 +111,22 @@ if __name__=="main":
         model = AutoModelForCausalLM.from_pretrained(args.model, trust_remote_code=True, torch_dtype=torch.float32).to(torch.device("cuda:0"))
         model.config.head_dim = model.config.hidden_size//model.config.num_attention_heads
 
-    dataset = data_utils.get_dataset(args.cal_dataset)
+    if args.cal_dataset not in ["billsum","multilegalpile"]:
+        dataset = data_utils.get_dataset(args.cal_dataset)
     if args.cal_dataset == "hotpot":
         train_dataset, test_dataset = dataset["train"], dataset["validation"]
     elif args.cal_dataset == "pubmed":
         train_dataset, test_dataset = dataset["train"], dataset["train"]
+    elif args.cal_dataset == "medqa_4options":
+        train_dataset, test_dataset = dataset["train"], dataset["validation"]
+    elif args.cal_dataset == "billsum":
+        train_dataset, test_dataset = data_utils.get_dataset(args.cal_dataset)
+    elif args.cal_dataset == "multilegalpile":
+        train_dataset, test_dataset = data_utils.get_dataset(args.cal_dataset)
     else:
         train_dataset, test_dataset = dataset["train"], dataset["test"]
+        
+
     train_loader = data_utils.prepare_dataloader(
         dataset=train_dataset,
         tokenizer=tokenizer,
@@ -127,9 +137,7 @@ if __name__=="main":
         seed=args.seed,
     )
 
-    test_loader = data_utils.prepare_test_dataloader(
-            dataset=test_dataset, tokenizer=tokenizer, batch_size=args.ppl_eval_batch_size
-        )
+    
 
     for i in train_loader:
         i.pop("labels")
@@ -139,6 +147,9 @@ if __name__=="main":
     data = {k: v.to("cuda:0") for k, v in data.items()}
 
     gs = global_sparsity_allocation(model, data, args.sparsity)
+
+    print(gs.gs)
+    import pdb;pdb.set_trace()
 
 
 

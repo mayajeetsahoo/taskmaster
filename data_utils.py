@@ -1,6 +1,7 @@
 import logging
-
+from functools import partial
 import datasets
+from datasets import DatasetDict
 import torch
 from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 from transformers import PreTrainedTokenizerBase
@@ -30,7 +31,12 @@ def get_dataset(name: str) -> datasets.DatasetDict:
             },
             "cols_to_remove": ['url', 'timestamp'],
         },
-        "alpaca": {"path": "tatsu-lab/alpaca", "cols_to_remove": ['input', 'output', 'instruction']},"glue":{}
+        "alpaca": {"path": "tatsu-lab/alpaca", "cols_to_remove": ['input', 'output', 'instruction']},"glue":{},
+        "hotpot":{"path":"hotpot_qa","config_name":"distractor","cols_to_remove":['id', 'question', 'answer', 'type', 'level', 'supporting_facts']},
+        "pubmed":{"path":"qiaojin/PubMedQA","config_name":"pqa_artificial","cols_to_remove":['pubid', 'question',  'long_answer', 'final_decision']},
+        "medqa_4options":{"path":"lavita/medical-qa-datasets", "config_name":"med-qa-en-4options-source","cols_to_remove":['meta_info', 'question', 'answer_idx', 'answer', 'options', 'metamap_phrases']},
+        "billsum":{"path":"billsum","config_name":None,"cols_to_remove":["title","summary"]},
+        "multilegalpile":{"path":"joelniklaus/Multi_Legal_Pile","config_name":"en_contracts","cols_to_remove":['language', 'type', 'jurisdiction']}
     }
 
     if name not in ds_properties:
@@ -42,10 +48,25 @@ def get_dataset(name: str) -> datasets.DatasetDict:
     ds = datasets.load_dataset(
         properties["path"], name=properties.get("config_name"), data_files=properties.get("data_files")
     )
+    
+    
+    if name =="billsum":
+        ds_train = ds["train"].map(partial(format_prompt_billsum,split = "train"),load_from_cache_file=False,   keep_in_memory=True )
+        ds_test = ds["test"].map(partial(format_prompt_billsum,split = "test"),load_from_cache_file=False,   keep_in_memory=True )
+        ds_train = ds_train.remove_columns(properties["cols_to_remove"])
+        # ds_test = ds_test.remove_columns(properties["cols_to_remove"])
+        return ds_train , ds_test
 
+    if name == "medqa_4options":
+        ds = ds.map(format_prompt_medqa_4opt,load_from_cache_file=False,   keep_in_memory=True )
     if "cols_to_remove" in properties:
         ds = ds.remove_columns(properties["cols_to_remove"])
 
+    if name =="multilegalpile":
+        train_ds = ds["train"].select(range(1000))
+        test_ds = ds["train"].select(range(1000,1300))
+        return train_ds , test_ds
+  
     # if alpaca, create a test and validation set from the training set
     if name == "alpaca":
         ds = ds["train"].train_test_split(test_size=0.2, seed=42)
@@ -53,7 +74,15 @@ def get_dataset(name: str) -> datasets.DatasetDict:
         temp_ds = temp_ds.train_test_split(test_size=0.5, seed=42)
         ds["test"] = temp_ds["train"]
         ds["validation"] = temp_ds["test"]
-
+    
+    if name =="hotpot":
+        ds = ds.map(join_all_sentences,load_from_cache_file=False,   keep_in_memory=True )
+        ds = ds.remove_columns(["context"])
+    if name == "pubmed":
+        ds = ds.map(pubmed_data_shaper,load_from_cache_file=False,   keep_in_memory=True )
+        ds = ds.remove_columns(["context"])
+    
+    
     logging.info("Loading dataset done")
     return ds
 
@@ -183,3 +212,52 @@ def prepare_test_dataloader(
     loader = DataLoader(test_ds, batch_size=batch_size)
     logging.info(f"Preparing test dataloader done")
     return loader
+
+
+# for hotpot combining sentences
+
+def join_all_sentences(example):
+    # Flatten the list of sentence lists and join with whitespace
+    all_sentences = [sentence for sentences_group in example["context"]["sentences"] for sentence in sentences_group]
+    example["text"] = " ".join(all_sentences)
+    return example
+
+def pubmed_data_shaper(example):
+    all_sentences = [sentence for sentence in example["context"]["contexts"]]
+    example["text"] = " ".join(all_sentences)
+    return example
+
+
+def format_prompt_medqa_4opt(example):
+    
+    text = f"Question: {example["question"]}\n"
+    for i, opt in enumerate(example["options"]):
+        text += f"{chr(65+i)}. {opt["value"]}\n"
+    text += f"\nAnswer:{example["answer_idx"]}.{example["answer"]}"
+    example["text"] = text
+    return example
+
+def format_prompt_billsum(example,split):
+    if split == "train":
+        text = f"Summarize the following legislative bill in plain English:\nTitle : {example["title"]}\nBill Text : {example["text"]}\nsummary : {example["summary"]}"
+    if split == "test":
+        text = f"Summarize the following legislative bill in plain English:\nTitle : {example["title"]}\nBill Text : {example["text"]}\nsummary : "
+    example["text"] = text
+    return example
+
+
+## add question
+
+## med , func call , legal , code 2 each with trainset
+
+## use preexisting metric
+
+## take 3 llm , calculate the metric without pruning , plot 10-80 sparsity
+
+##mayajeets  mayajeets@123 
+
+##10.192.12.214
+
+## tmux 
+
+##boolq , modegpt has them

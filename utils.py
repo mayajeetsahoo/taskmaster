@@ -7,6 +7,8 @@ from typing import TypeVar
 import time
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+import evaluate
 device = torch.device("cuda:0")
 
 T = TypeVar('T')
@@ -107,3 +109,38 @@ def sync_gpus() -> None:
     """Sync all GPUs to make sure all operations are finished, needed for correct benchmarking of latency/throughput."""
     for i in range(torch.cuda.device_count()):
         torch.cuda.synchronize(device=i)
+
+
+def evaluate_rouge(model,test_dataset,tokenizer):
+    rouge = evaluate.load("rouge")
+    predictions = []
+    references = []
+    for ex in tqdm(test_dataset.select(range(100))):
+        pred = generate_summary(ex["text"],model,tokenizer)
+        # ⚠️ Model output includes prompt — strip it
+        if "Summary:" in pred:
+            pred = pred.split("Summary:")[-1].strip()
+
+        predictions.append(pred)
+        references.append(ex["summary"])
+    results = rouge.compute(predictions=predictions, references=references, use_stemmer=True)
+    return results
+
+
+
+
+def generate_summary(text,model,tokenizer, max_new_tokens=128):
+    prompt = f"Summarize the following US Congressional bill:\n\n{text}\n\nSummary:"
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048).to(model.device)
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
