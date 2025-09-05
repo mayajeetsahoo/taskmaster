@@ -10,8 +10,7 @@ import os
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# auth_token = "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"
-auth_token = "REMOVED"
+
 model = "meta-llama/Llama-2-7b-hf"
 # model = "codellama/CodeLlama-7b-Instruct-hf"
 # model = "WizardLM/WizardCoder-15B-V1.0"
