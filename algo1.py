@@ -241,3 +241,4 @@ if args.cal_dataset == "billsum":
     rouge_scores = utils.evaluate_rouge(model,test_dataset,tokenizer)
     logging.info(f"pruned model rouge scores are :rouge1:{rouge_scores["rouge1"]} rouge2:{rouge_scores["rouge2"]}  rougeL:{rouge_scores["rougeL"]}")
 
+
