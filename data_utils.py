@@ -50,7 +50,7 @@ def get_dataset(name: str) -> datasets.DatasetDict:
     )
     
     
-    
+
     if name =="billsum":
         ds_train = ds["train"].map(partial(format_prompt_billsum,split = "train"),load_from_cache_file=False,   keep_in_memory=True )
         ds_test = ds["test"].map(partial(format_prompt_billsum,split = "test"),load_from_cache_file=False,   keep_in_memory=True )
@@ -247,18 +247,3 @@ def format_prompt_billsum(example,split):
     return example
 
 
-## add question
-
-## med , func call , legal , code 2 each with trainset
-
-## use preexisting metric
-
-## take 3 llm , calculate the metric without pruning , plot 10-80 sparsity
-
-##mayajeets  mayajeets@123 
-
-##10.192.12.214
-
-## tmux 
-
-##boolq , modegpt has them
