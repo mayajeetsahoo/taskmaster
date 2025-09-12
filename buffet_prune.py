@@ -57,7 +57,6 @@ train_dataset_medqa = train_dataset_medqa.shuffle(seed=42).select(range(5000))
 train_dataset_med = concatenate_datasets([train_dataset_pmed, train_dataset_medqa]).shuffle(seed=42)
 test_dataset_med = concatenate_datasets([test_dataset_pmed, test_dataset_medqa]).shuffle(seed=42)
 
-import pdb;pdb.set_trace()
 
 ## Math
 math_dataset = data_utils.get_dataset("mathqa")
@@ -68,13 +67,6 @@ train_dataset_sci, test_dataset_sci = sci_dataset["train"].shuffle(seed=42).sele
 ## General
 dataset = data_utils.get_dataset("wikitext2")
 train_dataset_gen, test_dataset_gen = dataset["train"].shuffle(seed=42).select(range(5000)), dataset["test"].shuffle(seed=42).select(range(300))
-
-
-
-
-
-
-
 
 
 

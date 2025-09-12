@@ -79,3 +79,4 @@ class mode_gpt_algo1():
             module.gate_proj.weight.data = new_gate_proj.to(module.gate_proj.weight.device)
 
             module.down_proj.weight.data = W_D_k.T.to(module.down_proj.weight.device)
+        del model
