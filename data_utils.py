@@ -33,10 +33,12 @@ def get_dataset(name: str) -> datasets.DatasetDict:
         },
         "alpaca": {"path": "tatsu-lab/alpaca", "cols_to_remove": ['input', 'output', 'instruction']},"glue":{},
         "hotpot":{"path":"hotpot_qa","config_name":"distractor","cols_to_remove":['id', 'question', 'answer', 'type', 'level', 'supporting_facts']},
-        "pubmed":{"path":"qiaojin/PubMedQA","config_name":"pqa_artificial","cols_to_remove":['pubid', 'question',  'long_answer', 'final_decision']},
+        "pubmedqa":{"path":"qiaojin/PubMedQA","config_name":"pqa_artificial","cols_to_remove":['pubid', 'question',  'long_answer', 'final_decision']},
         "medqa_4options":{"path":"lavita/medical-qa-datasets", "config_name":"med-qa-en-4options-source","cols_to_remove":['meta_info', 'question', 'answer_idx', 'answer', 'options', 'metamap_phrases']},
         "billsum":{"path":"billsum","config_name":None,"cols_to_remove":["title","summary"]},
-        "multilegalpile":{"path":"joelniklaus/Multi_Legal_Pile","config_name":"en_contracts","cols_to_remove":['language', 'type', 'jurisdiction']}
+        "multilegalpile":{"path":"joelniklaus/Multi_Legal_Pile","config_name":"en_contracts","cols_to_remove":['language', 'type', 'jurisdiction']},
+        "mathqa":{"path":"allenai/math_qa","cols_to_remove":['Rationale', 'options', 'correct', 'annotated_formula', 'linear_formula', 'category']},
+        "sciq":{"path":"allenai/sciq","cols_to_remove":['question','distractor3','distractor2','distractor1','correct_answer','support']}
     }
 
     if name not in ds_properties:
@@ -45,12 +47,17 @@ def get_dataset(name: str) -> datasets.DatasetDict:
         return datasets.load_dataset("glue", "sst2")
     
     properties = ds_properties[name]
-    ds = datasets.load_dataset(
-        properties["path"], name=properties.get("config_name"), data_files=properties.get("data_files")
-    )
-    
-    
+    if properties["path"] == "joelniklaus/Multi_Legal_Pile":
+        ds = datasets.load_dataset(
+            properties["path"], name=properties.get("config_name"), data_files=properties.get("data_files"),trust_remote_code=True
+        )
+    else:
+        ds = datasets.load_dataset(
+            properties["path"], name=properties.get("config_name"), data_files=properties.get("data_files")
+        )
 
+    if name == "sciq":
+        ds = ds.map(format_prompt_sciq,load_from_cache_file=False,   keep_in_memory=True )
     if name =="billsum":
         ds_train = ds["train"].map(partial(format_prompt_billsum,split = "train"),load_from_cache_file=False,   keep_in_memory=True )
         ds_test = ds["test"].map(partial(format_prompt_billsum,split = "test"),load_from_cache_file=False,   keep_in_memory=True )
@@ -62,10 +69,13 @@ def get_dataset(name: str) -> datasets.DatasetDict:
         ds = ds.map(format_prompt_medqa_4opt,load_from_cache_file=False,   keep_in_memory=True )
     if "cols_to_remove" in properties:
         ds = ds.remove_columns(properties["cols_to_remove"])
+    if name == "mathqa":
+        ds = ds.rename_column("Problem", "text")
+        
 
     if name =="multilegalpile":
-        train_ds = ds["train"].select(range(1000))
-        test_ds = ds["train"].select(range(1000,1300))
+        train_ds = ds["train"].select(range(5000))
+        test_ds = ds["train"].select(range(5000,5300))
         return train_ds , test_ds
   
     # if alpaca, create a test and validation set from the training set
@@ -79,9 +89,13 @@ def get_dataset(name: str) -> datasets.DatasetDict:
     if name =="hotpot":
         ds = ds.map(join_all_sentences,load_from_cache_file=False,   keep_in_memory=True )
         ds = ds.remove_columns(["context"])
-    if name == "pubmed":
+    if name == "pubmedqa":
         ds = ds.map(pubmed_data_shaper,load_from_cache_file=False,   keep_in_memory=True )
         ds = ds.remove_columns(["context"])
+        train_ds = ds["train"].select(range(5000))
+        test_ds = ds["train"].select(range(5000,5300))
+        return train_ds , test_ds
+
     
     
     logging.info("Loading dataset done")
@@ -247,3 +261,9 @@ def format_prompt_billsum(example,split):
     return example
 
 
+def format_prompt_sciq(example):
+    
+    
+    text = f"{example['support']}.lstrip()\nQuestion: {example['question']}\nAnswer:"
+    example["text"] = text
+    return example
