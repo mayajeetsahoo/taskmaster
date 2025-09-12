@@ -54,18 +54,18 @@ args = parser.parse_args()
 
 
 if args.model.split('/')[0] == "meta-llama":
-    tokenizer = LlamaTokenizer.from_pretrained(args.model,use_auth_token = args.auth_token)
+    tokenizer = LlamaTokenizer.from_pretrained(args.model,token = args.auth_token)
     tokenizer.pad_token = tokenizer.eos_token
 
     model = LlamaForCausalLM.from_pretrained(
         args.model,
         device_map="auto",              
-        torch_dtype=torch.float32,             
-        use_auth_token = args.auth_token
+        dtype=torch.float32,             
+        token = args.auth_token
     )
 elif args.model.split('/')[0] == "Qwen":
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(args.model, trust_remote_code=True, torch_dtype=torch.float32).to(torch.device("cuda:0"))
+    model = AutoModelForCausalLM.from_pretrained(args.model, trust_remote_code=True, dtype=torch.float32).to(torch.device("cuda:0"))
     model.config.head_dim = model.config.hidden_size//model.config.num_attention_heads
 
 
